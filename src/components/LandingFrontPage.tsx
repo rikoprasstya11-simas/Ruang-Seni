@@ -20,6 +20,7 @@ import {
   type PublicGalleryResponse,
 } from '../services/apiClient';
 import { DEFAULT_KATEGORI_KARYA } from '../types/seniRuang';
+import { syncFaviconWithLogo } from '../utils/favicon';
 import { generateGoogleAppsScriptCode } from '../utils/gasTemplate';
 import { FIREBASE_AUTH_DOMAINS_URL } from '../services/firebaseAuth';
 import { GoogleSignInButton, ModalShell, SeniRuangLogo } from './CommonUI';
@@ -110,6 +111,13 @@ export function LandingFrontPage({
   useEffect(() => {
     loadGallery();
   }, [loadGallery]);
+
+  useEffect(() => {
+    const id = galleryData?.identitas;
+    if (id) {
+      syncFaviconWithLogo(id.logo_file_id, id.logo_url, id.nama_website);
+    }
+  }, [galleryData?.identitas]);
 
   const kelasOptions = useMemo(() => {
     if (galleryData?.kelas && galleryData.kelas.length > 0) return galleryData.kelas;
@@ -227,7 +235,18 @@ export function LandingFrontPage({
       <header className="sticky top-0 z-30 border-b border-slate-200/80 bg-white/95 backdrop-blur-xs px-6 py-3.5">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-8">
           <a href="#top" className="flex items-center gap-2.5 whitespace-nowrap shrink-0">
-            <SeniRuangLogo size={32} />
+            {identitas.logo_file_id ? (
+              <div className="h-8 w-8 overflow-hidden rounded-xl border border-slate-200 bg-white shrink-0">
+                <DriveImage
+                  fileId={identitas.logo_file_id}
+                  fallbackUrl={identitas.logo_url}
+                  alt={identitas.nama_website || 'SENI RUANG'}
+                  className="h-full w-full object-contain p-0.5"
+                />
+              </div>
+            ) : (
+              <SeniRuangLogo size={32} />
+            )}
             <span className="text-lg font-bold tracking-tight text-slate-900">
               {identitas.nama_website || 'SENI RUANG'}
             </span>

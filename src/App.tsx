@@ -33,6 +33,7 @@ import {
 } from './services/apiClient';
 import { googleSignIn, initAuth, logout } from './services/firebaseAuth';
 import type { UserRole, WorkspaceBootstrapData } from './types/seniRuang';
+import { syncFaviconWithLogo } from './utils/favicon';
 
 interface NavItem {
   id: NavSection;
@@ -120,6 +121,20 @@ export default function App() {
     );
     return () => unsub();
   }, [loadWorkspace]);
+
+  useEffect(() => {
+    if (workspaceData?.identitas) {
+      syncFaviconWithLogo(
+        workspaceData.identitas.logo_file_id,
+        workspaceData.identitas.logo_url,
+        workspaceData.identitas.nama_website
+      );
+    }
+  }, [
+    workspaceData?.identitas?.logo_file_id,
+    workspaceData?.identitas?.logo_url,
+    workspaceData?.identitas?.nama_website,
+  ]);
 
   const handleGoogleLogin = async () => {
     setAuthLoading(true);
