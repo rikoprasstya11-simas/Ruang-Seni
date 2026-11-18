@@ -1,0 +1,6 @@
+{
+  "name": "SENI RUANG",
+  "description": "Pusat Digital Administrasi Guru dan Galeri Karya Seni Budaya SMP terintegrasi Google Drive dan Google Sheets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
