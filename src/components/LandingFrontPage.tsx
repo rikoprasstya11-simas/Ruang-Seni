@@ -21,6 +21,7 @@ import {
 } from '../services/apiClient';
 import { DEFAULT_KATEGORI_KARYA } from '../types/seniRuang';
 import { generateGoogleAppsScriptCode } from '../utils/gasTemplate';
+import { FIREBASE_AUTH_DOMAINS_URL } from '../services/firebaseAuth';
 import { GoogleSignInButton, ModalShell, SeniRuangLogo } from './CommonUI';
 import { DriveImage } from './DriveImage';
 
@@ -282,8 +283,31 @@ export function LandingFrontPage({
               </p>
 
               {authError && (
-                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-                  {authError}
+                <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 space-y-2">
+                  <p>{authError}</p>
+                  {authError.includes('Authorized Domains') && (
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          navigator.clipboard.writeText(window.location.hostname);
+                          onToast('success', `Domain "${window.location.hostname}" disalin.`);
+                        }}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-2.5 py-1 text-xs font-semibold text-red-800 hover:bg-red-100"
+                      >
+                        <Copy className="h-3 w-3" />
+                        Salin: {window.location.hostname}
+                      </button>
+                      <a
+                        href={FIREBASE_AUTH_DOMAINS_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1.5 rounded-lg bg-red-700 px-2.5 py-1 text-xs font-semibold text-white hover:bg-red-800"
+                      >
+                        Buka Firebase Authorized Domains
+                      </a>
+                    </div>
+                  )}
                 </div>
               )}
 

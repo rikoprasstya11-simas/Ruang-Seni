@@ -45,6 +45,9 @@ export const initAuth = (
   });
 };
 
+export const FIREBASE_PROJECT_ID = firebaseConfig.projectId;
+export const FIREBASE_AUTH_DOMAINS_URL = `https://console.firebase.google.com/project/${firebaseConfig.projectId}/authentication/settings`;
+
 export const googleSignIn = async (): Promise<{ user: User; accessToken: string }> => {
   try {
     isSigningIn = true;
@@ -55,6 +58,17 @@ export const googleSignIn = async (): Promise<{ user: User; accessToken: string 
     }
     cachedAccessToken = credential.accessToken;
     return { user: result.user, accessToken: cachedAccessToken };
+  } catch (error: unknown) {
+    const code = (error as { code?: string })?.code || '';
+    if (code === 'auth/unauthorized-domain') {
+      const domain = typeof window !== 'undefined' ? window.location.hostname : '';
+      const wrapped = new Error(
+        `Domain "${domain}" belum terdaftar di Firebase Authorized Domains. Tambahkan domain tersebut di Firebase Console (project: ${firebaseConfig.projectId}) lalu coba login kembali.`
+      ) as Error & { code?: string };
+      wrapped.code = 'auth/unauthorized-domain';
+      throw wrapped;
+    }
+    throw error;
   } finally {
     isSigningIn = false;
   }
