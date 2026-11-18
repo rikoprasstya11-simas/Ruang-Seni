@@ -121,6 +121,12 @@ export function PengaturanView({
         { kunci: 'gas_webapp_url', nilai: gasUrl.trim(), deskripsi: 'URL Web App Google Apps Script' },
       ]);
 
+      if (gasUrl.trim()) {
+        localStorage.setItem('seni_ruang_public_gas_url', gasUrl.trim());
+      } else {
+        localStorage.removeItem('seni_ruang_public_gas_url');
+      }
+
       onToast('success', 'Pengaturan website dan konfigurasi berhasil disimpan ke Google Sheets.');
       setConfirmSaveIdentitas(false);
       await onRefresh();

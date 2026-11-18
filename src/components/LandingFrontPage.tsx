@@ -177,16 +177,18 @@ export function LandingFrontPage({
     setFile(candidate);
   };
 
+  const hasGasEndpoint = Boolean(gasUrl.trim() || galleryData?.configured);
+
   const handleStudentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!file) {
       onToast('error', 'Pilih foto karya atau file PDF tugas Anda terlebih dahulu.');
       return;
     }
-    if (!gasUrl.trim()) {
+    if (!hasGasEndpoint) {
       onToast(
         'error',
-        'Koneksi Google Apps Script belum diatur oleh guru. Buka "Panduan Vercel & GAS" untuk menempelkan URL Web App.'
+        'Koneksi Google Apps Script belum terpasang. Tempel URL Web App Apps Script di kolom di atas terlebih dahulu.'
       );
       return;
     }
@@ -196,7 +198,7 @@ export function LandingFrontPage({
     try {
       await uploadStudentWorkPublic({
         file,
-        gasUrl: gasUrl.trim(),
+        gasUrl: gasUrl.trim() || galleryData?.gasEndpoint || '',
         judul_karya: judulKarya.trim(),
         nama_siswa: namaSiswa.trim(),
         nis_siswa: nisSiswa.trim(),
@@ -611,10 +613,34 @@ export function LandingFrontPage({
         subtitle="Pilih foto karya (JPG/PNG) atau file PDF tugas Anda untuk dikumpulkan ke guru"
       >
         <form onSubmit={handleStudentSubmit} className="space-y-4">
-          {!gasUrl.trim() && (
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-              URL Google Apps Script sekolah belum terpasang. Pastikan guru sudah mengatur{' '}
-              <code className="font-mono">VITE_GAS_WEBAPP_URL</code> di Vercel atau menempelkannya di halaman utama.
+          {!hasGasEndpoint && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3.5 space-y-2.5 text-xs text-amber-950">
+              <p>
+                <strong>URL Google Apps Script belum terhubung di halaman ini.</strong> Jika Anda guru, tempel URL Web App Apps Script (berakhiran <code className="font-mono">/exec</code>) di bawah, atau pastikan sudah mengatur <code className="font-mono">VITE_GAS_WEBAPP_URL</code> di Vercel lalu melakukan <strong>Redeploy</strong>.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="url"
+                  value={gasInput}
+                  onChange={(e) => setGasInput(e.target.value)}
+                  placeholder="https://script.google.com/macros/s/.../exec"
+                  className="flex-1 rounded-lg border border-amber-300 bg-white px-3 py-1.5 font-mono text-xs text-slate-900 focus:border-teal-600 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const cleaned = gasInput.trim();
+                    if (!cleaned) return;
+                    localStorage.setItem(GAS_STORAGE_KEY, cleaned);
+                    setGasUrl(cleaned);
+                    loadGallery(cleaned);
+                    onToast('success', 'URL Google Apps Script terhubung!');
+                  }}
+                  className="rounded-lg bg-teal-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-teal-700 whitespace-nowrap"
+                >
+                  Hubungkan
+                </button>
+              </div>
             </div>
           )}
 

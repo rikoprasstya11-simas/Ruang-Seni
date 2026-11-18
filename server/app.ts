@@ -572,7 +572,8 @@ export function createApiApp() {
 
   // Public gallery endpoint via configured GAS Web App (for front page & visitors)
   app.get('/api/public/gallery', async (req, res) => {
-    const gasUrl = String(req.query.gasUrl || activePublicGasUrl || '').trim();
+    const envGasUrl = process.env.SENI_RUANG_GAS_URL || process.env.VITE_GAS_WEBAPP_URL || '';
+    const gasUrl = String(req.query.gasUrl || activePublicGasUrl || envGasUrl).trim();
     if (!gasUrl) {
       res.json({ configured: false, karya: [], identitas: null, kelas: [], kategoriKarya: [] });
       return;
@@ -582,8 +583,26 @@ export function createApiApp() {
         redirect: 'follow',
       });
       const text = await response.text();
-      const data = JSON.parse(text);
-      res.json({ configured: true, ...data });
+      if (text.trim().startsWith('<')) {
+        res.status(502).json({
+          configured: true,
+          error:
+            'Google Apps Script mengembalikan halaman HTML (bukan JSON). Pastikan saat Deploy Web App Anda memilih "Execute as: Me" dan "Who has access: Anyone", lalu gunakan URL berakhiran /exec.',
+        });
+        return;
+      }
+      let data: Record<string, unknown>;
+      try {
+        data = JSON.parse(text) as Record<string, unknown>;
+      } catch {
+        res.status(502).json({
+          configured: true,
+          error:
+            'Respon Google Apps Script bukan JSON yang valid. Pastikan URL berakhiran /exec dan kode Code.gs sudah di-deploy ulang.',
+        });
+        return;
+      }
+      res.json({ configured: true, gasEndpoint: gasUrl, ...data });
     } catch (err) {
       res.status(502).json({
         configured: true,
@@ -620,11 +639,12 @@ export function createApiApp() {
           mimeType: string;
         };
 
-        const gasUrl = String(meta.gasUrl || activePublicGasUrl || '').trim();
+        const envGasUrl = process.env.SENI_RUANG_GAS_URL || process.env.VITE_GAS_WEBAPP_URL || '';
+        const gasUrl = String(meta.gasUrl || activePublicGasUrl || envGasUrl).trim();
         if (!gasUrl) {
           res.status(400).json({
             error:
-              'URL Google Apps Script Web App belum dikonfigurasi oleh guru. Minta guru menempelkan URL GAS pada Pengaturan atau Vercel Environment.',
+              'URL Google Apps Script Web App belum dikonfigurasi oleh guru. Tempel URL Web App Apps Script di halaman utama atau atur VITE_GAS_WEBAPP_URL di Vercel.',
           });
           return;
         }
@@ -669,7 +689,23 @@ export function createApiApp() {
         });
 
         const text = await gasResponse.text();
-        const result = JSON.parse(text) as { ok: boolean; error?: string; record?: Record<string, string> };
+        if (text.trim().startsWith('<')) {
+          res.status(502).json({
+            error:
+              'Google Apps Script mengembalikan halaman HTML. Pastikan deployment Web App diset "Execute as: Me" dan "Who has access: Anyone".',
+          });
+          return;
+        }
+        let result: { ok: boolean; error?: string; record?: Record<string, string> };
+        try {
+          result = JSON.parse(text) as { ok: boolean; error?: string; record?: Record<string, string> };
+        } catch {
+          res.status(502).json({
+            error:
+              'Respon Google Apps Script tidak valid (bukan JSON). Pastikan deployment Web App aktif dan URL berakhiran /exec.',
+          });
+          return;
+        }
         if (!result.ok) {
           res.status(400).json({ error: result.error || 'Google Apps Script menolak unggahan.' });
           return;
@@ -1195,6 +1231,177 @@ export function createApiApp() {
     }
   );
 
+  // Pre-check permissions & duplicates before direct browser-to-Drive upload (bypasses 4.5MB serverless payload limit)
+  app.post('/api/drive/prepare-upload', requireGoogleAuth, async (req: AuthedRequest, res) => {
+    try {
+      const token = req.accessToken!;
+      const email = req.userEmail!;
+      const { spreadsheetId, targetSheet, folderId, fileName, record } = req.body as {
+        spreadsheetId: string;
+        targetSheet: 'ADMINISTRASI' | 'DOKUMENTASI' | 'KARYA_SISWA' | 'IDENTITAS_LOGO';
+        folderId: string;
+        fileName: string;
+        record?: Record<string, string>;
+      };
+
+      if (!spreadsheetId || !folderId || !fileName) {
+        res.status(400).json({ error: 'Spreadsheet ID, Folder ID, dan nama file wajib tersedia.' });
+        return;
+      }
+
+      const role = await getAuthoritativeRoleForRequest(token, email, spreadsheetId);
+      if (role === 'PENGUNJUNG') {
+        res.status(403).json({ error: 'Pengunjung tidak memiliki izin mengunggah berkas.' });
+        return;
+      }
+      if (role === 'SISWA' && targetSheet !== 'KARYA_SISWA') {
+        res.status(403).json({ error: 'Siswa hanya dapat mengunggah karya seni.' });
+        return;
+      }
+
+      const ext = (fileName.split('.').pop() || '').toLowerCase();
+      if (!ALLOWED_FILE_EXTENSIONS.includes(ext as (typeof ALLOWED_FILE_EXTENSIONS)[number])) {
+        res.status(400).json({
+          error: `Format file .${ext} tidak didukung. Gunakan PDF, DOC/DOCX, XLS/XLSX, PPT/PPTX, JPG, JPEG, atau PNG.`,
+        });
+        return;
+      }
+
+      if (targetSheet !== 'IDENTITAS_LOGO' && record) {
+        const existingRes = (await googleFetch(
+          `${SHEETS_API}/${spreadsheetId}/values/${encodeURIComponent(`${targetSheet}!A1:Z5000`)}`,
+          token
+        )) as { values?: string[][] };
+        const existingRows = rowsToObjects(existingRes.values, SHEET_HEADERS[targetSheet]);
+        const titleField = targetSheet === 'KARYA_SISWA' ? 'judul_karya' : 'judul';
+        const candidateTitle = (record[titleField] || '').trim().toLowerCase();
+        const duplicate = existingRows.find(
+          (r) =>
+            (r[titleField] || '').trim().toLowerCase() === candidateTitle &&
+            (r.nama_file || '').trim().toLowerCase() === fileName.trim().toLowerCase() &&
+            (r.kelas || '').trim().toLowerCase() === (record.kelas || '').trim().toLowerCase()
+        );
+        if (duplicate) {
+          res.status(409).json({
+            error: `Data ganda terdeteksi: "${record[titleField]}" dengan file "${fileName}" sudah tersimpan.`,
+          });
+          return;
+        }
+      }
+
+      res.json({ ok: true, role, email });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Gagal memvalidasi unggahan berkas.',
+      });
+    }
+  });
+
+  // Register metadata into Google Sheets after direct browser-to-Drive upload
+  app.post('/api/drive/register-upload', requireGoogleAuth, async (req: AuthedRequest, res) => {
+    try {
+      const token = req.accessToken!;
+      const email = req.userEmail!;
+      const { spreadsheetId, targetSheet, fileId, webViewLink, fileName, fileSizeBytes, record } = req.body as {
+        spreadsheetId: string;
+        targetSheet: 'ADMINISTRASI' | 'DOKUMENTASI' | 'KARYA_SISWA' | 'IDENTITAS_LOGO';
+        fileId: string;
+        webViewLink?: string;
+        fileName: string;
+        fileSizeBytes: number;
+        record: Record<string, string>;
+      };
+
+      if (!spreadsheetId || !fileId || !fileName) {
+        res.status(400).json({ error: 'Data hasil unggahan Google Drive tidak lengkap.' });
+        return;
+      }
+
+      const role = await getAuthoritativeRoleForRequest(token, email, spreadsheetId);
+      if (role === 'PENGUNJUNG') {
+        res.status(403).json({ error: 'Pengunjung tidak memiliki izin menyimpan arsip.' });
+        return;
+      }
+      if (role === 'SISWA' && targetSheet !== 'KARYA_SISWA') {
+        res.status(403).json({ error: 'Siswa hanya dapat mengunggah karya seni.' });
+        return;
+      }
+
+      if (
+        targetSheet === 'IDENTITAS_LOGO' ||
+        record?.status_publikasi === 'Dipublikasikan' ||
+        record?.status_publikasi === 'Karya Pilihan'
+      ) {
+        try {
+          await googleFetch(`${DRIVE_API}/files/${encodeURIComponent(fileId)}/permissions`, token, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ role: 'reader', type: 'anyone' }),
+          });
+        } catch {
+          // Optional permission fallback
+        }
+      }
+
+      const driveUrl = webViewLink || `https://drive.google.com/file/d/${fileId}/view`;
+      const ext = (fileName.split('.').pop() || '').toLowerCase();
+
+      if (targetSheet === 'IDENTITAS_LOGO') {
+        const updated = await updateSheetRowById(token, spreadsheetId, 'IDENTITAS_WEBSITE', 'ID-WEB-01', {
+          logo_file_id: fileId,
+          logo_url: driveUrl,
+        });
+        await logActivity(token, spreadsheetId, email, role, 'UPLOAD', 'IDENTITAS', fileName, 'Memperbarui logo website di Google Drive');
+        res.json({ ok: true, fileId, driveUrl, record: updated });
+        return;
+      }
+
+      const prefix =
+        targetSheet === 'ADMINISTRASI' ? 'ADM' : targetSheet === 'DOKUMENTASI' ? 'DOK' : 'KRY';
+      const newId = generateId(prefix);
+      const fullRecord: Record<string, string> = {
+        ...record,
+        id: newId,
+        nama_file: fileName,
+        format_file: ext.toUpperCase(),
+        ukuran_file: formatBytes(Number(fileSizeBytes || 0)),
+        drive_file_id: fileId,
+        drive_url: driveUrl,
+        tanggal_upload: nowIso(),
+        ...(targetSheet === 'KARYA_SISWA'
+          ? {
+              tanggal_pengumpulan: record.tanggal_pengumpulan || nowIso().slice(0, 10),
+              apresiasi_count: record.apresiasi_count || '0',
+              pengunggah: email,
+              status_publikasi:
+                role === 'ADMIN' ? record.status_publikasi || 'Dipublikasikan' : 'Dipublikasikan',
+            }
+          : {
+              pemilik: record.pemilik || email,
+            }),
+      };
+
+      const row = objectToRow(fullRecord, SHEET_HEADERS[targetSheet]);
+      await appendSheetRows(token, spreadsheetId, targetSheet, [row]);
+      await logActivity(
+        token,
+        spreadsheetId,
+        email,
+        role,
+        'UPLOAD',
+        targetSheet,
+        fullRecord.judul_karya || fullRecord.judul || fileName,
+        `Mengunggah ${fileName} (${fullRecord.ukuran_file}) ke Google Drive`
+      );
+
+      res.json({ ok: true, fileId, driveUrl, record: fullRecord });
+    } catch (err) {
+      res.status(500).json({
+        error: err instanceof Error ? err.message : 'Gagal mencatat berkas ke Google Sheets.',
+      });
+    }
+  });
+
   app.get('/api/drive/file/:fileId', requireGoogleAuth, async (req: AuthedRequest, res) => {
     try {
       const token = req.accessToken!;
@@ -1530,6 +1737,16 @@ export function createApiApp() {
         error: err instanceof Error ? err.message : 'Gagal menghapus data secara permanen.',
       });
     }
+  });
+
+  // Ensure Express middleware errors (like PayloadTooLargeError) always return JSON rather than HTML
+  app.use((err: Error & { status?: number; type?: string }, _req: Request, res: Response, _next: NextFunction) => {
+    const status = err.status || (err.type === 'entity.too.large' ? 413 : 500);
+    const message =
+      status === 413
+        ? 'Ukuran file melebihi batas unggahan server. Kompres file terlebih dahulu atau gunakan file lebih kecil.'
+        : err.message || 'Terjadi kesalahan internal pada server API.';
+    res.status(status).json({ error: message });
   });
 
   return app;
